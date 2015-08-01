@@ -1,0 +1,84 @@
+#!/usr/bin/env python
+
+import datetime
+import time
+import pytz
+utc = pytz.UTC
+
+import RPi.GPIO as GPIO
+
+from astral import Astral
+ 
+import sys, time
+from daemon import Daemon
+ 
+class LightDaemon(Daemon):
+
+    def initialize(self):
+        city_name = 'Helsinki'
+        self.a = Astral();
+        self.a.solar_depression = 'nautical' # -6 degrees, also nautical is possible(-12)
+
+        self.city = self.a[city_name]
+        self.sun = self.city.sun(date=datetime.datetime.now(), local=True)
+
+        channels = [11,16] #TODO ADD 27&22 for a subset of the lights, maybe small lights for civil?
+        GPIO.setmode(GPIO.BOARD)
+        GPIO.setup(channels, GPIO.OUT, initial=GPIO.LOW)
+
+        self.lightsOn = False
+
+    def setLights(self, isOn):
+        if isOn:
+
+            GPIO.output(16, GPIO.HIGH)
+            time.sleep(1.0)
+            GPIO.output(16, GPIO.LOW)
+            self.lightsOn = True
+        else:
+            GPIO.output(11, GPIO.HIGH)
+            time.sleep(1.0)
+            GPIO.output(11, GPIO.LOW)
+            self.lightsOn = False
+
+    def run(self):
+        self.initialize();
+
+        """ DEBUG info
+        print('Location is set for %s/%s\n' % (self.city.name, self.city.region))
+        print('Sunset:	%s' % str(self.sun['sunset']))
+        """
+
+        while True:
+            self.sun = self.city.sun(date=datetime.datetime.now(), local=False)
+            if self.lightsOn == False:
+                if utc.localize(datetime.datetime.utcnow()) > self.sun['sunset'] and datetime.datetime.time(datetime.datetime.now()) < datetime.time(23,30):
+                    print("Sun has set, activating lights")
+                    self.setLights(True)
+                else:
+                    print("Lights are off and waiting")
+            else:
+                if datetime.datetime.time(datetime.datetime.now()) > datetime.time(23,30) or utc.localize(datetime.datetime.utcnow()) < self.sun['sunset']:
+                    self.setLights(False);
+                    print("Shutting down the lights for the night!")
+                else:
+                    print("Lights are on!")
+
+            time.sleep(1800) #Half an hour is accurate enough.
+ 
+if __name__ == "__main__":
+        daemon = LightDaemon('/tmp/light-daemon.pid')
+        if len(sys.argv) == 2:
+                if 'start' == sys.argv[1]:
+                        daemon.start()
+                elif 'stop' == sys.argv[1]:
+                        daemon.stop()
+                elif 'restart' == sys.argv[1]:
+                        daemon.restart()
+                else:
+                        print "Unknown command"
+                        sys.exit(2)
+                sys.exit(0)
+        else:
+                print "usage: %s start|stop|restart" % sys.argv[0]
+                sys.exit(2)
